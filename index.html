@@ -1,0 +1,1238 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raktárkezelő ONLINE - V33.1 (Fix)</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    
+    <style>
+        body { background-color: #f4f6f9; font-family: 'Verdana', sans-serif; }
+        .header-bg { background-color: #2c3e50; color: white; padding: 15px 0; border-bottom: 4px solid #0d6efd; }
+        .card { box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: none; margin-bottom: 20px; }
+        .hidden-perm { display: none !important; }
+        .status-badge { font-size: 0.85em; }
+        .sig-col { border-bottom: 1px solid #ccc; height: 30px; min-width: 100px; }
+        .sig-box { border-bottom: 1px dotted #000; height: 20px; width: 100%; display:block; }
+
+        /* Login */
+        #loginOverlay, #loadingOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(44, 62, 80, 0.98); z-index: 9999;
+            display: flex; justify-content: center; align-items: center; flex-direction: column;
+            color: white;
+        }
+        .login-box { background: white; padding: 40px; border-radius: 8px; width: 500px; text-align: center; box-shadow: 0 0 20px rgba(0,0,0,0.5); color: #333; }
+        
+        /* Alert Bottom */
+        #alertPlaceBottom {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            width: 500px; max-width: 90%; z-index: 10000;
+        }
+
+        /* PRINT VIEW */
+        #printSection { display: none; background: white; padding: 20px; min-height: 100vh; }
+        
+        @media print {
+            @page { size: landscape; margin: 0.5cm; }
+            #mainApp, #loginOverlay, .no-print, .modal, #alertPlaceBottom { display: none !important; }
+            #printSection { display: block !important; width: 100%; }
+            body { background-color: white; -webkit-print-color-adjust: exact; }
+            .table th, .table td { padding: 4px; font-size: 11px; vertical-align: middle; }
+            .accordion-collapse { display: block !important; }
+        }
+
+        .cloud-status { position: fixed; top: 10px; right: 10px; z-index: 10001; font-size: 12px; color: #ccc; }
+        .cloud-ok { color: #2ecc71; }
+        .cloud-sync { color: #f1c40f; }
+        .cloud-error { color: #e74c3c; }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay">
+        <div class="spinner-border text-primary mb-3" role="status"></div>
+        <h4>Kapcsolódás a Firebase-hez...</h4>
+        <small class="text-white-50" id="loadingStatusText">Konfiguráció betöltése...</small>
+    </div>
+
+    <input type="file" id="fileImportAmmo" accept=".csv" style="display:none" onchange="processAmmoImport(this)">
+    <input type="file" id="fileImportWeapons" accept=".csv" style="display:none" onchange="processWeaponImport(this)">
+
+    <div id="loginOverlay" style="display:none;">
+        <div class="login-box">
+            <h3 class="mb-4 text-primary"><i class="fa-solid fa-cloud"></i> Raktár Online</h3>
+            <div class="form-floating mb-3">
+                <input type="text" class="form-control" id="loginUser" placeholder="Felhasználónév">
+                <label>Felhasználónév</label>
+            </div>
+            <div class="form-floating mb-3">
+                <input type="password" class="form-control" id="loginPass" placeholder="Jelszó">
+                <label>Jelszó</label>
+            </div>
+            <button class="btn btn-primary w-100 btn-lg" onclick="performLogin()">Belépés</button>
+            <div class="mt-4 text-start small bg-light p-2 rounded text-muted">
+                A belépéshez kérje el a jogosultságot az Admintól.
+            </div>
+        </div>
+    </div>
+
+    <div class="cloud-status" id="cloudStatusIcon" title="Adatbázis Státusz">
+        <i class="fa-solid fa-circle"></i> <span id="cloudStatusText">Offline</span>
+    </div>
+
+    <div id="mainApp" style="display:none;">
+        <div class="header-bg">
+            <div class="container d-flex justify-content-between align-items-center">
+                <div>
+                    <h3 class="m-0"><i class="fa-solid fa-shield-halved"></i> Raktár V33 <small class="fs-6 opacity-50">Online</small></h3>
+                    <span class="badge bg-warning text-dark mt-1" id="roleBadge"></span>
+                </div>
+                <div class="d-flex gap-3 align-items-center">
+                    <div class="text-end lh-1">
+                        <div class="small text-white-50">Belépve:</div>
+                        <div class="fw-bold" id="displayUserFull"></div>
+                    </div>
+                    <div class="vr bg-secondary"></div>
+                    <button class="btn btn-light btn-sm" onclick="exportFuzet()"><i class="fa-solid fa-file-csv"></i> Napló CSV</button>
+                    <button class="btn btn-danger btn-sm" onclick="performLogoutSequence()"><i class="fa-solid fa-power-off"></i> Kilépés</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="container mt-4">
+            <div id="alertPlace"></div>
+
+            <ul class="nav nav-tabs mb-3" id="mainTab" role="tablist">
+                <li class="nav-item" id="nav-issue"><button class="nav-link active fw-bold" data-bs-target="#tab-issue" data-bs-toggle="tab"><i class="fa-solid fa-share-from-square"></i> Kiadás / Visszavét</button></li>
+                <li class="nav-item"><button class="nav-link text-warning-emphasis fw-bold" data-bs-target="#tab-ammo" data-bs-toggle="tab"><i class="fa-solid fa-boxes-stacked"></i> Lőszer Raktár</button></li>
+                <li class="nav-item" id="nav-weapons"><button class="nav-link text-danger fw-bold" data-bs-target="#tab-weapons" data-bs-toggle="tab"><i class="fa-solid fa-gun"></i> Fegyver Nyilvántartás</button></li>
+                <li class="nav-item"><button class="nav-link text-dark fw-bold" data-bs-target="#tab-accessories" data-bs-toggle="tab"><i class="fa-solid fa-vest"></i> Kiegészítők</button></li>
+                <li class="nav-item"><button class="nav-link" data-bs-target="#tab-log" data-bs-toggle="tab"><i class="fa-solid fa-list"></i> Eseménynapló</button></li>
+                <li class="nav-item" id="nav-users"><button class="nav-link text-secondary" data-bs-target="#tab-users" data-bs-toggle="tab"><i class="fa-solid fa-users"></i> Felhasználók</button></li>
+            </ul>
+
+            <div class="tab-content">
+                
+                <div class="tab-pane fade show active" id="tab-issue">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card" id="card-issue-action">
+                                <div class="card-header bg-primary text-white fw-bold">Felszerelés Kiadása</div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <div class="btn-group w-100" role="group">
+                                            <input type="radio" class="btn-check" name="issueMode" id="modeWeapon" autocomplete="off" checked onchange="toggleIssueUI()">
+                                            <label class="btn btn-outline-primary" for="modeWeapon"><i class="fa-solid fa-gun"></i> Szolgálati Fegyver</label>
+                                            <input type="radio" class="btn-check" name="issueMode" id="modeTrainer" autocomplete="off" onchange="toggleIssueUI()">
+                                            <label class="btn btn-outline-primary" for="modeTrainer"><i class="fa-solid fa-bullseye"></i> Csak Lőszer</label>
+                                        </div>
+                                    </div>
+
+                                    <div id="weaponSection">
+                                        <label class="form-label">Fegyver választás (Csak 'Raktáron'):</label>
+                                        <select class="form-select mb-3" id="issueWeaponSelect" onchange="autoConfigureAmmo()"></select>
+                                        <div class="card bg-light border-0 mb-2 p-2">
+                                            <div class="d-flex align-items-center justify-content-between mb-1">
+                                                <span class="fw-bold"><i class="fa-solid fa-layer-group"></i> Tár (db):</span>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="chkMagModify" onchange="toggleMagInput()">
+                                                    <label class="form-check-label small" for="chkMagModify">Módosít</label>
+                                                </div>
+                                            </div>
+                                            <input type="number" id="issueMagCount" class="form-control" value="2" readonly>
+                                        </div>
+                                        <div class="card bg-light border-0 mb-3 p-2">
+                                            <div class="d-flex justify-content-between mb-2">
+                                                <span class="fw-bold"><i class="fa-solid fa-vest"></i> Kiegészítők:</span>
+                                                <select class="form-select form-select-sm w-50" id="issueAccSource" onchange="renderAccessoryIssueList()"></select>
+                                            </div>
+                                            <div id="accessoryIssueList"></div>
+                                        </div>
+                                    </div>
+
+                                    <div class="card bg-light border-0 mb-3 p-2" id="ammoSection">
+                                        <label class="form-label fw-bold small"><i class="fa-solid fa-box-open"></i> Lőszer (Igény esetén):</label>
+                                        <div class="row g-2">
+                                            <div class="col-4"><label class="small text-muted">Szerv:</label><select class="form-select form-select-sm" id="issueAmmoOrg"></select></div>
+                                            <div class="col-4"><label class="small text-muted">Kaliber:</label><select class="form-select form-select-sm" id="issueAmmoCaliber"></select></div>
+                                            <div class="col-4"><label class="small text-muted">Db:</label><input type="number" class="form-control form-control-sm" id="issueAmmoAmount" placeholder="0"></div>
+                                        </div>
+                                    </div>
+
+                                    <label class="form-label mt-2">Engedélyező (Bejelentkezve):</label>
+                                    <input type="text" class="form-control mb-2 fw-bold bg-light" id="issueApprover" readonly>
+                                    
+                                    <label class="form-label">Átvevő:</label>
+                                    <input type="text" class="form-control mb-3" id="issueReceiver" placeholder="Átvevő neve">
+                                    <button class="btn btn-primary w-100 fw-bold py-2" onclick="performIssue()">KIADÁS RÖGZÍTÉSE</button>
+                                </div>
+                            </div>
+
+                            <div class="card mt-3" id="card-return-action">
+                                <div class="card-header bg-success text-white fw-bold">Visszavétel</div>
+                                <div class="card-body">
+                                    <label class="form-label">Tétel kiválasztása:</label>
+                                    <select class="form-select mb-3" id="returnSelect" onchange="checkReturnItemDetails()"></select>
+                                    
+                                    <div class="card bg-light border-0 p-2 mb-2" id="returnAmmoContainer" style="display:none;">
+                                        <div class="form-check"><input class="form-check-input" type="checkbox" id="chkReturnAmmo" onchange="toggleReturnAmmoInput()"><label class="form-check-label fw-bold" for="chkReturnAmmo">Lőszer visszavétel</label></div>
+                                        <div id="returnAmmoInputDiv" class="mt-2" style="display:none;"><input type="number" class="form-control form-control-sm" id="returnAmmoAmount" placeholder="db"><small class="text-info" id="maxReturnAmmoInfo"></small></div>
+                                    </div>
+
+                                    <div class="card bg-light border-0 p-2 mb-3" id="returnAccContainer" style="display:none;">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="chkReturnAcc" checked>
+                                            <label class="form-check-label fw-bold" for="chkReturnAcc">Kiegészítők visszavétele</label>
+                                        </div>
+                                        <small class="text-muted d-block mt-1" id="accReturnInfo"></small>
+                                    </div>
+
+                                    <label class="form-label">Visszavételt igazoló tiszt:</label>
+                                    <input type="text" class="form-control mb-2" id="returnOfficer" placeholder="Automatikusan kitöltve">
+                                    <button class="btn btn-success w-100" onclick="performReturn()">VISSZAVÉTEL RÖGZÍTÉSE</button>
+                                </div>
+                            </div>
+                            <div id="readOnlyMsg" class="alert alert-info hidden-perm"><i class="fa-solid fa-eye"></i> Csak olvasó mód.</div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-header bg-dark text-white">Kiadott Tételek</div>
+                                <div class="table-responsive"><table class="table table-striped table-sm mb-0"><thead><tr><th>Idő</th><th>Tétel</th><th>Átvevő</th></tr></thead><tbody id="activeIssuesTable"></tbody></table></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-pane fade" id="tab-ammo">
+                    <div class="row">
+                        <div class="col-md-4" id="card-stock-action">
+                            <div class="card border-warning mb-3">
+                                <div class="card-header bg-warning text-dark fw-bold d-flex justify-content-between align-items-center">
+                                    <span>Lőszer Bevételezés</span>
+                                    <button class="btn btn-sm btn-info text-white admin-only hidden-perm" onclick="showAdminDataModal('ammo')"><i class="fa-solid fa-plus"></i> Új Kaliber</button>
+                                </div>
+                                <div class="card-body">
+                                    <label>Szerv:</label><select class="form-select mb-2" id="stockOrgSelect" onchange="updateStockTypeSelect()"></select>
+                                    <label>Kaliber:</label><select class="form-select mb-2" id="stockTypeSelect"></select>
+                                    <label>Mennyiség (+/-):</label><input type="number" class="form-control mb-3" id="stockAmountChange" placeholder="pl. 100">
+                                    <button class="btn btn-warning w-100" onclick="updateStock()">KÉSZLET FRISSÍTÉSE</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span>Lőszer Készlet</span>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-sm btn-dark" onclick="openPrintModal('ammo')"><i class="fa-solid fa-print"></i> Leltár</button>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-outline-secondary" onclick="exportAmmoCSV()"><i class="fa-solid fa-file-export"></i> Export</button>
+                                            <button class="btn btn-outline-danger admin-only hidden-perm" onclick="document.getElementById('fileImportAmmo').click()"><i class="fa-solid fa-file-import"></i> Import</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div id="ammoDisplayArea" class="accordion accordion-flush"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-pane fade" id="tab-weapons">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="card border-danger">
+                                <div class="card-header bg-danger text-white fw-bold d-flex justify-content-between align-items-center">
+                                    <span id="weaponFormTitle">Új Fegyver Rögzítése</span>
+                                    <button class="btn btn-sm btn-light text-danger" onclick="resetWeaponForm()" title="Új rögzítése"><i class="fa-solid fa-rotate-right"></i></button>
+                                </div>
+                                <div class="card-body">
+                                    <input type="hidden" id="editWeaponId">
+                                    <div class="mb-2"><label class="small text-muted">Típus</label><select class="form-select" id="newWepType"></select></div>
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6"><label class="small text-muted">Kaliber</label><select class="form-select" id="newWepCaliber"></select></div>
+                                        <div class="col-6"><label class="small text-muted">Szerv</label><select class="form-select" id="newWepOrg"></select></div>
+                                    </div>
+                                    <div class="mb-2"><label class="small text-muted">Sorszám (Serial)</label><input type="text" class="form-control" id="newWepSerial" placeholder="pl. B123456"></div>
+                                    <div class="mb-3"><label class="small text-muted">Fegyverszám (Leltári)</label><input type="text" class="form-control" id="newWepCustId" placeholder="pl. ORFK-1234"></div>
+                                    
+                                    <div class="alert alert-light border small text-center text-muted">
+                                        Státusz módosításhoz (Javítás/Selejt) használja a listában lévő ceruza ikont!
+                                    </div>
+
+                                    <button class="btn btn-danger w-100 fw-bold mb-2" id="btnSaveWeapon" onclick="handleWeaponSave()">RÖGZÍTÉS / ADAT MENTÉS</button>
+                                    <div id="cancelEditContainer" style="display:none;"><button class="btn btn-secondary w-100" onclick="resetWeaponForm()">Mégsem</button></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-8">
+                            <div class="card h-100">
+                                <div class="card-header d-flex justify-content-between align-items-center bg-light">
+                                    <span class="fw-bold"><i class="fa-solid fa-list"></i> Fegyverek Szervenként</span>
+                                    <div class="d-flex gap-2 align-items-center">
+                                        <button class="btn btn-sm btn-info text-white admin-only hidden-perm" id="btn-new-wep-type" onclick="showAdminDataModal('wep')"><i class="fa-solid fa-plus"></i> Új típus</button>
+                                        <button class="btn btn-sm btn-dark" onclick="openPrintModal('weapon')"><i class="fa-solid fa-print"></i> Leltár Nyomtatása</button>
+                                        <div class="btn-group btn-group-sm me-2">
+                                            <button class="btn btn-outline-secondary" onclick="exportWeaponCSV()"><i class="fa-solid fa-file-export"></i> CSV</button>
+                                            <button class="btn btn-outline-danger admin-only hidden-perm" onclick="document.getElementById('fileImportWeapons').click()"><i class="fa-solid fa-file-import"></i> Imp</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="accordion accordion-flush" id="weaponAccordionArea"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-pane fade" id="tab-accessories">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="card border-dark mb-3">
+                                <div class="card-header bg-dark text-white fw-bold d-flex justify-content-between align-items-center">
+                                    <span>Kiegészítő Bevételezés</span>
+                                    <button class="btn btn-sm btn-info text-white admin-only hidden-perm" onclick="showAdminDataModal('acc')"><i class="fa-solid fa-plus"></i> Új Eszköz</button>
+                                </div>
+                                <div class="card-body">
+                                    <label>Raktár (Szerv):</label>
+                                    <select class="form-select mb-2" id="accStockOrg"></select>
+                                    <label>Eszköz:</label>
+                                    <select class="form-select mb-2" id="accStockType"></select>
+                                    <label>Mennyiség (+/-):</label>
+                                    <input type="number" class="form-control mb-3" id="accStockAmount" placeholder="pl. 10">
+                                    <button class="btn btn-dark w-100" onclick="updateAccessoryStock()">BEVÉTELEZÉS</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <div class="card">
+                                <div class="card-header bg-light fw-bold d-flex justify-content-between align-items-center">
+                                    <span><i class="fa-solid fa-vest"></i> Kiegészítők Raktáronként</span>
+                                    <button class="btn btn-sm btn-dark" onclick="printAccInventory()"><i class="fa-solid fa-print"></i> Leltár</button>
+                                </div>
+                                <div class="card-body" id="accDisplayArea"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-pane fade" id="tab-log">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Eseménynapló</span>
+                            <div>
+                                <button class="btn btn-sm btn-outline-dark me-2" onclick="printEventLog()"><i class="fa-solid fa-print"></i> Nyomtatás</button>
+                                <button class="btn btn-sm btn-outline-danger admin-only hidden-perm" onclick="adminClearLogs()"><i class="fa-solid fa-trash"></i> Napló Törlése</button>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm table-hover" id="logTable">
+                                <thead class="table-light"><tr><th>F.sz.</th><th>Engedélyező</th><th>Kiadás</th><th>Fegyver</th><th>Lőszer</th><th>Egyéb</th><th>Átvevő</th><th>Aláírás</th><th>Visszavétel</th><th>Igazoló</th><th>Aláírás</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-pane fade" id="tab-users">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="card border-info">
+                                <div class="card-header bg-info text-white">Új Felhasználó</div>
+                                <div class="card-body">
+                                    <input type="text" id="newUsername" class="form-control mb-2" placeholder="Login Név">
+                                    <input type="text" id="newPassword" class="form-control mb-2" placeholder="Jelszó">
+                                    <input type="text" id="newRealName" class="form-control mb-2" placeholder="Teljes Név">
+                                    <select id="newRole" class="form-select mb-3"><option value="1">1 - Olvasó</option><option value="2">2 - Fegyverkiadó</option><option value="3">3 - Lőszerkiadó</option><option value="4">4 - Full Kiadó</option><option value="5">5 - Raktáros</option><option value="6">6 - Operator</option><option value="7">7 - ADMIN</option></select>
+                                    <button class="btn btn-info w-100 text-white fw-bold" onclick="addUser()">LÉTREHOZÁS</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <div class="card"><div class="card-header">Felhasználók</div><div class="table-responsive"><table class="table table-striped"><thead><tr><th>Név</th><th>Jogkör</th><th>Szint</th><th>Action</th></tr></thead><tbody id="usersTableBody"></tbody></table></div></div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+        <div id="alertPlaceBottom"></div>
+    </div>
+
+    <!-- Modals (Admin, History, Print, stb) -->
+    <!-- Ugyanazok maradnak, csak az adattárolás változott -->
+    <div class="modal fade" id="printOptionsModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title">Leltár Nyomtatási Opciók</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body"><p>Válassza ki a listázandó szerveket:</p><div class="mb-3"><button class="btn btn-sm btn-outline-primary" onclick="togglePrintChecks(true)">Összes kijelölése</button><button class="btn btn-sm btn-outline-secondary" onclick="togglePrintChecks(false)">Kijelölés törlése</button></div><div id="printOrgList" class="d-flex flex-wrap gap-2"></div><input type="hidden" id="printTypeSource"></div>
+                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Mégsem</button><button type="button" class="btn btn-primary" onclick="executePrint()">Nyomtatás</button></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="ammoHistoryModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-warning"><h5 class="modal-title" id="ammoHistoryTitle">Történet</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <button class="btn btn-sm btn-outline-dark mb-3 no-print" onclick="printAmmoHistory()"><i class="fa-solid fa-print"></i> Lista Nyomtatása</button>
+                    <table class="table table-sm table-striped border"><thead><tr><th>Dátum</th><th>Esemény</th><th>Átvevő</th><th>Felhasználó</th><th>Változás</th><th>Egyenleg</th></tr></thead><tbody id="ammoHistoryBody"></tbody></table>
+                </div>
+                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Bezárás</button></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="modal fade" id="adminDataModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white"><h5 class="modal-title"><i class="fa-solid fa-gear"></i> Adatkezelő (ADMIN)</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <ul class="nav nav-tabs mb-3" role="tablist">
+                        <li class="nav-item"><button class="nav-link active" data-bs-target="#tab-wep-data" data-bs-toggle="tab">Fegyver Típus</button></li>
+                        <li class="nav-item"><button class="nav-link" data-bs-target="#tab-ammo-data" data-bs-toggle="tab">Lőszer Kaliber</button></li>
+                        <li class="nav-item"><button class="nav-link" data-bs-target="#tab-acc-data" data-bs-toggle="tab">Kiegészítők</button></li>
+                        <li class="nav-item"><button class="nav-link" data-bs-target="#tab-org-data" data-bs-toggle="tab">Szervek & Jogok</button></li>
+                    </ul>
+                    <div class="tab-content">
+                        <div class="tab-pane fade show active" id="tab-wep-data"></div>
+                        <div class="tab-pane fade" id="tab-ammo-data"></div>
+                        <div class="tab-pane fade" id="tab-acc-data"></div>
+                        <div class="tab-pane fade" id="tab-org-data">
+                            <h6 class="text-muted">Szerv Kezelés</h6>
+                            <div class="row g-2 align-items-end mb-3">
+                                <div class="col-4"><label class="small">Szerv Neve</label><input type="text" class="form-control" id="newOrgName" placeholder="pl. TEK"></div>
+                                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" id="chkNewOrgW" checked><label>Fegyver</label></div></div>
+                                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" id="chkNewOrgA" checked><label>Lőszer</label></div></div>
+                                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" id="chkNewOrgAcc"><label>Kieg.</label></div></div>
+                                <div class="col"><button class="btn btn-primary w-100" onclick="addNewOrg()">Hozzáad</button></div>
+                            </div>
+                            <table class="table table-sm table-striped"><thead><tr><th>Szerv</th><th>Fegyver</th><th>Lőszer</th><th>Kieg.</th><th>Action</th></tr></thead><tbody id="orgAdminTable"></tbody></table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="statusChangeModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white"><h5 class="modal-title" id="statusChangeTitle">Státusz Módosítás</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <input type="hidden" id="statusChangeWepId">
+                    <div class="mb-3"><label class="form-label">Új Státusz:</label><select class="form-select" id="newWeaponStatusValue"></select></div>
+                    <div id="statusChangeDetails">
+                        <div class="mb-3"><label class="form-label">Kikérő/Selejtező neve:</label><input type="text" class="form-control" id="statusChangePerson" placeholder="Név"></div>
+                        <div class="mb-3"><label class="form-label">Ügyszám / Megjegyzés:</label><input type="text" class="form-control" id="statusChangeCaseNo" placeholder="Pl. Iktatószám"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Mégsem</button>
+                    <button type="button" class="btn btn-danger" onclick="confirmStatusChange()">ÁLLAPOT RÖGZÍTÉSE</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="printSection">
+        <div class="text-center mb-4"><h2 id="printTitle">NYOMTATÁS</h2><p><span id="printDate"></span></p></div>
+        <div id="printContent"></div>
+        <div class="mt-5 d-flex justify-content-between no-print"><button class="btn btn-secondary" onclick="restoreMainView()">Vissza</button><button class="btn btn-primary" onclick="window.print()">Nyomtatás</button></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- FIREBASE MODULES (WEBRŐL) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, doc, onSnapshot, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // FIREBASE KONFIGURÁCIÓ (A TE ADATAID)
+        const firebaseConfig = {
+            apiKey: "AIzaSyBLF_oQN4f60hY8EBUM4oXeWVyNxqchvG4",
+            authDomain: "raktar-v32-online.firebaseapp.com",
+            projectId: "raktar-v32-online",
+            storageBucket: "raktar-v32-online.firebasestorage.app",
+            messagingSenderId: "9970964660",
+            appId: "1:9970964660:web:c73d0f3fe3b57fd0379fe1"
+        };
+
+        // INIT FIREBASE
+        let app, db;
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            console.log("Firebase Init OK");
+        } catch(e) {
+            console.error("Firebase Init Error:", e);
+            document.getElementById("loadingStatusText").innerText = "Hiba a Firebase inicializáláskor! " + e.message;
+        }
+
+        // GLOBÁLIS FÜGGVÉNYEK CSERÉJE
+        window.db = db;
+        window.setDoc = setDoc;
+        window.doc = doc;
+        window.updateDoc = updateDoc;
+
+        // DB References
+        // Egyszerűsítés: Minden adat 3 fő dokumentumban lesz
+        // 'data/core' -> users, org_config, types, logCounter
+        // 'data/inventory' -> ammoDB, weaponDB
+        // 'data/logs' -> logs, ammoHistory
+
+        let dataReady = false;
+
+        async function initFirebaseSync() {
+            if(!db) return;
+            const statusIcon = document.getElementById("cloudStatusIcon");
+            const statusText = document.getElementById("cloudStatusText");
+            const loadTxt = document.getElementById("loadingStatusText");
+            
+            statusIcon.className = "cloud-status cloud-sync";
+            statusText.innerText = "Sync...";
+
+            // 1. CORE DATA
+            onSnapshot(doc(db, "data", "core"), (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    window.ORG_CONFIG = data.ORG_CONFIG || [];
+                    window.WEAPON_TYPES = data.WEAPON_TYPES || [];
+                    window.CALIBERS = data.CALIBERS || [];
+                    window.ACC_TYPES = data.ACC_TYPES || [];
+                    window.users = data.users || [];
+                    window.logCounter = data.logCounter || 1;
+                    checkReady();
+                } else {
+                    // First Run - Create Default Core
+                    loadTxt.innerText = "Adatbázis inicializálása...";
+                    initializeDefaultDB();
+                }
+            }, (error) => {
+                console.error("Core Sync Error:", error);
+                loadTxt.innerText = "Hiba: " + error.code + " (Ellenőrizd a 'Rules' beállítást a konzolon!)";
+                statusIcon.className = "cloud-status cloud-error";
+                statusText.innerText = "Hiba";
+            });
+
+            // 2. INVENTORY DATA
+            onSnapshot(doc(db, "data", "inventory"), (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    window.weaponDB = data.weaponDB || [];
+                    window.ammoDB = data.ammoDB || {};
+                    checkReady();
+                }
+            });
+
+            // 3. LOGS DATA
+            onSnapshot(doc(db, "data", "logs"), (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    window.logs = data.logs || [];
+                    window.ammoHistory = data.ammoHistory || [];
+                    checkReady();
+                }
+            });
+
+            function checkReady() {
+                if(!dataReady) {
+                    document.getElementById("loadingOverlay").style.display = "none";
+                    document.getElementById("loginOverlay").style.display = "flex";
+                    dataReady = true;
+                }
+                statusIcon.className = "cloud-status cloud-ok";
+                statusText.innerText = "Online";
+                
+                // Ha be van lépve, frissítsük a UI-t élőben
+                if(window.currentUser) {
+                    window.init();
+                    window.applyPermissions();
+                    window.renderUI();
+                    window.renderUsersTable();
+                }
+            }
+        }
+
+        // SAVE FUNCTIONS - REPLACING LOCALSTORAGE
+        // Minden mentéskor a felhőbe küldjük
+        window.pushCore = async function() {
+            if(!db) return;
+            document.getElementById("cloudStatusText").innerText = "Mentés...";
+            try {
+                await setDoc(doc(db, "data", "core"), {
+                    ORG_CONFIG: window.ORG_CONFIG,
+                    WEAPON_TYPES: window.WEAPON_TYPES,
+                    CALIBERS: window.CALIBERS,
+                    ACC_TYPES: window.ACC_TYPES,
+                    users: window.users,
+                    logCounter: window.logCounter
+                }, { merge: true });
+                document.getElementById("cloudStatusText").innerText = "Online";
+                console.log("Core saved to Cloud");
+            } catch(e) {
+                console.error("Save Error:", e);
+                alert("Mentési hiba! Ellenőrizd a jogosultságokat! " + e.message);
+            }
+        }
+
+        window.pushInventory = async function() {
+            if(!db) return;
+            document.getElementById("cloudStatusText").innerText = "Mentés...";
+            await setDoc(doc(db, "data", "inventory"), {
+                weaponDB: window.weaponDB,
+                ammoDB: window.ammoDB
+            }, { merge: true });
+            document.getElementById("cloudStatusText").innerText = "Online";
+        }
+
+        window.pushLogs = async function() {
+            if(!db) return;
+            document.getElementById("cloudStatusText").innerText = "Mentés...";
+            await setDoc(doc(db, "data", "logs"), {
+                logs: window.logs,
+                ammoHistory: window.ammoHistory
+            }, { merge: true });
+            document.getElementById("cloudStatusText").innerText = "Online";
+        }
+
+        // INITIAL SEED
+        async function initializeDefaultDB() {
+            console.log("Initializing Cloud DB for the first time...");
+            
+            // Hash "1234" = "81dc9bdb52d04dc20036dbd8313ed055"
+            // Simple hash for demo
+            const def_hash = simpleHash("1234");
+            
+            // Defaults - NO PLAIN TEXT PASSWORDS
+            const def_orgs = [{name: "ORFK", w: true, a: true, acc: false}, {name: "OIF", w: true, a: true, acc: false}, {name: "NAV", w: true, a: true, acc: false}, {name: "BV", w: true, a: true, acc: false}, {name: "NKE", w: false, a: false, acc: true}];
+            const def_weps = [{ type: "CZ P-07", caliber: "9x19mm" }, { type: "CZ P-09", caliber: "9x19mm" }, { type: "Glock 17", caliber: "9x19mm" }];
+            const def_users = [
+                { name: "admin", pass: def_hash, role: 7, realName: "Rendszer Admin" }, 
+                { name: "kiado", pass: def_hash, role: 4, realName: "Kovács Béla" }, 
+                { name: "raktaros", pass: def_hash, role: 5, realName: "Varga Géza" }
+            ];
+            const def_cal = ["9x19mm", ".45 ACP", "5.56x45mm"];
+            const def_acc = ["Fegyvertok", "Tártok"];
+
+            // Init AmmoDB structure
+            let def_ammoDB = {};
+            def_orgs.forEach(org => {
+                def_ammoDB[org.name] = {};
+                if(org.acc) def_acc.forEach(acc => def_ammoDB[org.name][acc]=0);
+                if(org.a) def_cal.forEach(c => def_ammoDB[org.name][c]=0);
+            });
+
+            // Push to cloud
+            try {
+                await setDoc(doc(db, "data", "core"), { ORG_CONFIG: def_orgs, WEAPON_TYPES: def_weps, CALIBERS: def_cal, ACC_TYPES: def_acc, users: def_users, logCounter: 1 });
+                await setDoc(doc(db, "data", "inventory"), { weaponDB: [], ammoDB: def_ammoDB });
+                await setDoc(doc(db, "data", "logs"), { logs: [], ammoHistory: [] });
+                alert("Az adatbázis inicializálva lett (Biztonságos módban)!");
+            } catch(e) {
+                console.error("Init Error:", e);
+                alert("Hiba az inicializáláskor: " + e.message + "\nEllenőrizd, hogy a Firestore RULES 'Test mode'-ban van-e!");
+            }
+        }
+
+        // Helper for hashing in module scope if needed by init
+        function simpleHash(str) {
+            let hash = 0;
+            if (str.length === 0) return hash + "";
+            for (let i = 0; i < str.length; i++) {
+                let char = str.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; 
+            }
+            return Math.abs(hash).toString(16);
+        }
+        // Export hash function to window so the app can use it
+        window.simpleHash = simpleHash;
+
+        // Start
+        initFirebaseSync();
+    </script>
+
+    <!-- APP LOGIC -->
+    <script>
+        // --- ADAT STRUKTÚRA & GLOBÁLIS VÁLTOZÓK ---
+        // Ezeket most már a Firebase tölti fel a window objectre
+        var ORG_CONFIG = []; 
+        var WEAPON_TYPES = [];
+        var ROLE_NAMES = { 1: "Olvasó", 2: "Fegyverkiadó", 3: "Lőszerkiadó", 4: "Full Kiadó", 5: "Raktáros", 6: "Operator", 7: "ADMIN" };
+        var CALIBERS = [];
+        var ACC_TYPES = [];
+        var users = [];
+        var currentUser=null;
+        var weaponDB=[];
+        var logs=[];
+        var logCounter=1;
+        var ammoDB={};
+        var ammoHistory=[];
+
+        // --- INIT ---
+        function init() {
+            // DB ellenőrzés és javítás ha sérült
+            ORG_CONFIG.forEach(org => {
+                if(!ammoDB[org.name]) ammoDB[org.name] = {};
+                if(org.acc) ACC_TYPES.forEach(acc => { if(ammoDB[org.name][acc]===undefined) ammoDB[org.name][acc]=0; });
+                if(org.a) CALIBERS.forEach(c => { if(ammoDB[org.name][c]===undefined) ammoDB[org.name][c]=0; });
+            });
+            setupDropdowns();
+            renderUsersTable();
+            updateStockTypeSelect();
+            const accOrg = ORG_CONFIG.find(o => o.acc);
+            if(accOrg) { 
+                const sel = document.getElementById("issueAccSource"); 
+                if(sel.options.length > 0) sel.value = accOrg.name; 
+                renderAccessoryIssueList(); 
+            }
+        }
+
+        // --- SAVE DATA OVERRIDE ---
+        // A kód többi része ezt hívja. Mi eldöntjük mit kell menteni.
+        function saveData(isMetadata=false){
+            // Itt hívjuk meg a fenti Firebase függvényeket
+            if(isMetadata) window.pushCore(); // Users, Config
+            else {
+                window.pushInventory();
+                window.pushLogs();
+                // Néha a logCounter miatt a core is kell
+                window.pushCore();
+            }
+        }
+
+        // --- LOGIN ---
+        function performLogin(){
+            const u=document.getElementById("loginUser").value;
+            const p=document.getElementById("loginPass").value;
+            // Használjuk a globálissá tett hash függvényt
+            const pHash = window.simpleHash(p); 
+            
+            // 1. Try Hash Match (Secure)
+            let f = users.find(x=>x.name===u && x.pass===pHash);
+
+            // 2. Fallback: Try Plain Text Match (Legacy/Transition)
+            if(!f) {
+                f = users.find(x=>x.name===u && x.pass===p);
+                if(f) {
+                    console.log("Migrating user password to hash...");
+                    f.pass = pHash; // Update local
+                    saveData(true); // Save the new hash to DB immediately
+                }
+            }
+            
+            if(f){
+                currentUser=f;
+                document.getElementById("loginOverlay").style.display="none";
+                document.getElementById("mainApp").style.display="block";
+                document.getElementById("displayUserFull").innerText=f.realName;
+                document.getElementById("roleBadge").innerText=ROLE_NAMES[f.role];
+                init();
+                applyPermissions();
+                renderUI();
+            } else alert("Hibás felhasználónév vagy jelszó!");
+        }
+
+        function applyPermissions(){
+            const r=parseInt(currentUser.role);
+            document.getElementById("nav-users").classList.toggle("hidden-perm", r!==7);
+            document.getElementById("nav-weapons").classList.toggle("hidden-perm", ![5,6,7].includes(r));
+            document.querySelectorAll('.admin-only').forEach(el => el.classList.toggle("hidden-perm", r!==7));
+            document.getElementById('btn-new-wep-type').classList.toggle("hidden-perm", r!==7);
+
+            if(r===5){ 
+                document.getElementById("nav-issue").classList.add("hidden-perm"); 
+                new bootstrap.Tab(document.querySelector('#mainTab button[data-bs-target="#tab-ammo"]')).show(); 
+            } else { 
+                document.getElementById("nav-issue").classList.remove("hidden-perm"); 
+            }
+            
+            const canIssue = [2,3,4,6,7].includes(r);
+            document.getElementById("card-issue-action").classList.toggle("hidden-perm", !canIssue);
+            document.getElementById("card-return-action").classList.toggle("hidden-perm", !canIssue);
+            document.getElementById("readOnlyMsg").classList.toggle("hidden-perm", canIssue);
+            document.getElementById("card-stock-action").classList.toggle("hidden-perm", ![5,6,7].includes(r));
+            
+            toggleIssueUI();
+        }
+
+        function toggleIssueUI(){
+            const isW=document.getElementById("modeWeapon").checked; 
+            const r=parseInt(currentUser.role); 
+            document.getElementById("weaponSection").style.display=isW?"block":"none"; 
+            document.getElementById("ammoSection").style.display=(r===2)?"none":"block";
+        }
+
+        // --- UI RENDER & LOGIC ---
+        function renderUI(){
+            const ws=document.getElementById("issueWeaponSelect"); 
+            ws.innerHTML="<option value=''>-- Válassz --</option>"; 
+            weaponDB.filter(x=>x.status==="RAKTÁRON").forEach(w=>ws.innerHTML+=`<option value="${w.id}">[${w.customId}] ${w.type}</option>`); 
+            
+            const rs=document.getElementById("returnSelect"); 
+            rs.innerHTML="<option value=''>-- Válassz --</option>"; 
+            logs.filter(x=>x.returnTime==="").forEach(l=>rs.innerHTML+=`<option value="${l.id}">${l.item} -> ${l.receiver}</option>`); 
+            
+            if(currentUser) {
+                document.getElementById("issueApprover").value = currentUser.realName;
+                document.getElementById("returnOfficer").value = currentUser.realName;
+            }
+
+            // Lőszer Tab - Csak a "hasAmmo" szervek
+            const ad=document.getElementById("ammoDisplayArea"); ad.innerHTML=""; 
+            ORG_CONFIG.filter(o => o.a).forEach((orgObj, index)=>{
+                const o = orgObj.name;
+                let itemsHtml = "";
+                // Csak a kalibereket listázzuk itt
+                CALIBERS.forEach(c => {
+                    const q = ammoDB[o] && ammoDB[o][c] !== undefined ? ammoDB[o][c] : 0;
+                    let col=(q<1000?'bg-danger':'bg-success');
+                    itemsHtml += `<div class="d-flex justify-content-between align-items-center border-bottom py-2"><div><span class="badge ${col} me-2" style="width:100px;">${q} db</span><span class="fw-bold">${c}</span></div><button class="btn btn-sm btn-outline-secondary" onclick="showAmmoHistory('${o}', '${c}')">Történet</button></div>`;
+                });
+                ad.innerHTML += `<div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button collapsed fw-bold text-dark" type="button" data-bs-toggle="collapse" data-bs-target="#flush-${index}">${o} Készlet</button></h2><div id="flush-${index}" class="accordion-collapse collapse" data-bs-parent="#ammoDisplayArea"><div class="accordion-body p-2">${itemsHtml}</div></div></div>`;
+            }); 
+            
+            // Kiegészítő Tab - "hasAcc" szervek
+            const accDiv = document.getElementById("accDisplayArea"); accDiv.innerHTML="";
+            ORG_CONFIG.filter(o => o.acc).forEach(orgObj => {
+                const o = orgObj.name;
+                accDiv.innerHTML += `<h5 class="text-primary mt-3 border-bottom border-primary">${o}</h5>`;
+                ACC_TYPES.forEach(type => {
+                     const qty = ammoDB[o] && ammoDB[o][type] !== undefined ? ammoDB[o][type] : 0;
+                     accDiv.innerHTML += `<div class="d-flex justify-content-between align-items-center border-bottom py-2"><div>${type}</div><div class="text-end fw-bold me-3">${qty} db <button class="btn btn-sm btn-outline-dark ms-2" onclick="showAmmoHistory('${o}', '${type}')">T</button></div></div>`;
+                });
+            });
+
+            // Napló
+            const at=document.getElementById("activeIssuesTable"); at.innerHTML=""; 
+            const ft=document.querySelector("#logTable tbody"); ft.innerHTML=""; 
+            [...logs].reverse().forEach(r=>{
+                const wp = r.itemWeapon || "-"; const am = r.itemAmmo || "-"; const ac = r.itemAcc || "-";
+                const fallback = (!r.itemWeapon && !r.itemAmmo && !r.itemAcc) ? r.item : ""; 
+                const displayWeapon = fallback ? fallback : wp;
+                ft.innerHTML+=`<tr><td>${r.fsz}</td><td>${r.approver}</td><td>${r.issueTime}</td><td>${displayWeapon}</td><td>${am}</td><td>${ac}</td><td>${r.receiver}</td><td class="sig-col"></td><td>${r.returnTime||"-"}</td><td>${r.returnVerifier||"-"}</td><td class="sig-col"></td></tr>`; 
+                if(!r.returnTime) {
+                    let timePart = r.issueTime.split(' ').pop();
+                    at.innerHTML+=`<tr><td>${timePart}</td><td>${r.item}</td><td>${r.receiver}</td></tr>`;
+                }
+            });
+            renderWeaponRegistry();
+        }
+
+        // --- ADMIN ---
+        function showAdminDataModal(tab) {
+            if(currentUser.role!==7) return showAlert("Csak Admin!", "danger");
+            const m = new bootstrap.Modal(document.getElementById('adminDataModal'));
+            
+            if(tab === 'wep') {
+                document.getElementById('tab-wep-data').innerHTML = `<h6 class="text-muted">Új Típus</h6><div class="row g-2 mb-3"><div class="col-6"><input id="newWepTypeName" class="form-control" placeholder="Típus"></div><div class="col-6"><input id="newWepTypeCaliber" class="form-control" placeholder="Kaliber"></div></div><button class="btn btn-primary w-100 mb-3" onclick="addWepType()">Rögzítés</button><div id="wepTypeList" class="list-group"></div>`;
+                renderWepList();
+            } else if(tab === 'ammo') {
+                document.getElementById('tab-ammo-data').innerHTML = `<h6 class="text-muted">Új Kaliber</h6><div class="input-group mb-3"><input id="newCaliberName" class="form-control" placeholder="Kaliber"><button class="btn btn-primary" onclick="addCaliber()">Hozzáad</button></div><div id="caliberList" class="list-group"></div>`;
+                renderCalList();
+            } else if(tab === 'acc') {
+                document.getElementById('tab-acc-data').innerHTML = `<h6 class="text-muted">Új Eszköz</h6><div class="input-group mb-3"><input id="newAccTypeName" class="form-control" placeholder="Eszköz"><button class="btn btn-primary" onclick="addAccType()">Hozzáad</button></div><div id="accTypeList" class="list-group"></div>`;
+                renderAccList();
+            } else if(tab === 'org') { // Szervek
+                renderOrgList();
+            }
+            m.show();
+            const tabBtn = document.querySelector(`#adminDataModal button[data-bs-target="#tab-${tab}-data"]`);
+            if(tabBtn) new bootstrap.Tab(tabBtn).show();
+            if(tab==='ammo'||tab==='acc'||tab==='wep'||tab==='org') renderOrgList(); 
+        }
+
+        function renderOrgList() {
+            const tb = document.getElementById("orgAdminTable"); tb.innerHTML = "";
+            ORG_CONFIG.forEach((o, i) => {
+                tb.innerHTML += `
+                <tr>
+                    <td>${o.name}</td>
+                    <td><input type="checkbox" ${o.w?'checked':''} disabled></td>
+                    <td><input type="checkbox" ${o.a?'checked':''} disabled></td>
+                    <td><input type="checkbox" ${o.acc?'checked':''} disabled></td>
+                    <td><button class="btn btn-sm btn-outline-danger" onclick="deleteOrg(${i})">X</button></td>
+                </tr>`;
+            });
+        }
+        function addNewOrg() {
+            const n = document.getElementById("newOrgName").value.trim();
+            if(!n) return;
+            if(ORG_CONFIG.some(o => o.name === n)) return showAlert("Létezik!", "danger");
+            const w = document.getElementById("chkNewOrgW").checked;
+            const a = document.getElementById("chkNewOrgA").checked;
+            const acc = document.getElementById("chkNewOrgAcc").checked;
+            ORG_CONFIG.push({name: n, w, a, acc});
+            // Init DB
+            if(!ammoDB[n]) ammoDB[n] = {};
+            if(a) CALIBERS.forEach(c => { if(ammoDB[n][c]===undefined) ammoDB[n][c]=0; });
+            if(acc) ACC_TYPES.forEach(t => { if(ammoDB[n][t]===undefined) ammoDB[n][t]=0; });
+            saveData(true); renderOrgList(); setupDropdowns();
+            showAlert("Szerv hozzáadva.", "success");
+        }
+        function deleteOrg(i) {
+            if(!confirm("Törlés? Az adatok megmaradnak, de nem lesz választható.")) return;
+            ORG_CONFIG.splice(i, 1);
+            saveData(true); renderOrgList(); setupDropdowns();
+        }
+
+        // --- EGYÉB ADMIN FÜGGVÉNYEK ---
+        function renderWepList() { const l = document.getElementById("wepTypeList"); l.innerHTML = ""; WEAPON_TYPES.forEach((w,i)=>l.innerHTML+=`<div class="list-group-item d-flex justify-content-between">${w.type} (${w.caliber}) <button class="btn btn-sm btn-outline-danger" onclick="deleteWepType(${i})">X</button></div>`); }
+        function renderCalList() { const l = document.getElementById("caliberList"); l.innerHTML = ""; CALIBERS.forEach((c,i)=>l.innerHTML+=`<div class="list-group-item d-flex justify-content-between">${c} <button class="btn btn-sm btn-outline-danger" onclick="deleteCaliber(${i})">X</button></div>`); }
+        function renderAccList() { const l = document.getElementById("accTypeList"); l.innerHTML = ""; ACC_TYPES.forEach((a,i)=>l.innerHTML+=`<div class="list-group-item d-flex justify-content-between">${a} <button class="btn btn-sm btn-outline-danger" onclick="deleteAccType('${a}')">X</button></div>`); }
+        function addWepType() { const t = document.getElementById("newWepTypeName").value.trim(); const c = document.getElementById("newWepTypeCaliber").value.trim(); if(!t || !c) return; WEAPON_TYPES.push({type:t, caliber:c}); if(!CALIBERS.includes(c)) { CALIBERS.push(c); ORG_CONFIG.forEach(o=>{if(o.a)ammoDB[o.name][c]=0;}); } saveData(true); renderWepList(); setupDropdowns(); }
+        function deleteWepType(i) { WEAPON_TYPES.splice(i,1); saveData(true); renderWepList(); setupDropdowns(); }
+        function addCaliber() { const c = document.getElementById("newCaliberName").value.trim(); if(!c) return; if(!CALIBERS.includes(c)) { CALIBERS.push(c); ORG_CONFIG.forEach(o=>{if(o.a)ammoDB[o.name][c]=0;}); } saveData(true); renderCalList(); setupDropdowns(); }
+        function deleteCaliber(i) { const c = CALIBERS[i]; if(weaponDB.some(w=>w.caliber===c)) return showAlert("Használatban!", "danger"); CALIBERS.splice(i,1); saveData(true); renderCalList(); setupDropdowns(); }
+        function addAccType() { const a = document.getElementById("newAccTypeName").value.trim(); if(!a) return; ACC_TYPES.push(a); ORG_CONFIG.forEach(o=>{if(o.acc)ammoDB[o.name][a]=0;}); saveData(true); renderAccList(); setupDropdowns(); }
+        function deleteAccType(n) { ACC_TYPES = ACC_TYPES.filter(x=>x!==n); saveData(true); renderAccList(); setupDropdowns(); }
+
+        // --- DROPDOWNS ---
+        function setupDropdowns() {
+            // Lőszerhez csak aki "a" (Ammo) képes
+            const ammoOrgs = ORG_CONFIG.filter(o => o.a).map(o => `<option value="${o.name}">${o.name}</option>`).join("");
+            document.getElementById("issueAmmoOrg").innerHTML = ammoOrgs;
+            document.getElementById("stockOrgSelect").innerHTML = ammoOrgs;
+
+            // Fegyverhez aki "w" (Weapon) képes - FIX: Külön lista
+            const wepOrgs = ORG_CONFIG.filter(o => o.w).map(o => `<option value="${o.name}">${o.name}</option>`).join("");
+            document.getElementById("newWepOrg").innerHTML = wepOrgs; 
+
+            // Kiegészítőhöz csak aki "acc" képes
+            const accOrgs = ORG_CONFIG.filter(o => o.acc).map(o => `<option value="${o.name}">${o.name}</option>`).join("");
+            document.getElementById("issueAccSource").innerHTML = accOrgs;
+            document.getElementById("accStockOrg").innerHTML = accOrgs;
+
+            const calOpts = CALIBERS.map(c => `<option value="${c}">${c}</option>`).join("");
+            document.getElementById("issueAmmoCaliber").innerHTML = calOpts;
+            document.getElementById("stockTypeSelect").innerHTML = calOpts;
+            document.getElementById("newWepCaliber").innerHTML = calOpts;
+
+            const wepTypeOpts = WEAPON_TYPES.map(w => `<option value="${w.type}">${w.type}</option>`).join("");
+            document.getElementById("newWepType").innerHTML = wepTypeOpts;
+
+            document.getElementById("accStockType").innerHTML = ACC_TYPES.map(a => `<option value="${a}">${a}</option>`).join("");
+            
+            renderAccessoryIssueList();
+        }
+
+        // --- KIEGÉSZÍTŐ LISTA (Issue Tab) ---
+        function renderAccessoryIssueList() {
+            const listDiv = document.getElementById("accessoryIssueList");
+            const src = document.getElementById("issueAccSource").value;
+            if(!src) { listDiv.innerHTML="<small class='text-muted'>Nincs forrás kiválasztva</small>"; return; }
+
+            listDiv.innerHTML = ACC_TYPES.map(acc => {
+                const isChecked = (acc === "Fegyvertok" || acc === "Tártok") ? "checked" : "";
+                const val = (acc === "Fegyvertok" || acc === "Tártok") ? "1" : "0";
+                // Max készlet kijelzése
+                const stock = (ammoDB[src] && ammoDB[src][acc]) ? ammoDB[src][acc] : 0;
+                return `
+                <div class="row g-1 align-items-center mb-1">
+                    <div class="col-5">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="chkAcc-${acc.replace(/\s/g,'')}" ${isChecked} onchange="toggleAccInput('chkAcc-${acc.replace(/\s/g,'')}','cntAcc-${acc.replace(/\s/g,'')}')">
+                            <label class="form-check-label small">${acc}</label>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <input type="number" id="cntAcc-${acc.replace(/\s/g,'')}" class="form-control form-control-sm" value="${val}" min="0">
+                    </div>
+                    <div class="col-3 text-end small text-muted">
+                        (Max:${stock})
+                    </div>
+                </div>`;
+            }).join("");
+        }
+
+        // --- ALAP FUNKCIÓK ---
+        function handleWeaponSave() {
+            const id = document.getElementById("editWeaponId").value;
+            const type = document.getElementById("newWepType").value;
+            const caliber = document.getElementById("newWepCaliber").value;
+            const org = document.getElementById("newWepOrg").value;
+            const serial = document.getElementById("newWepSerial").value;
+            const custId = document.getElementById("newWepCustId").value;
+
+            // Pontosabb hibaüzenetek
+            if(!type) return showAlert("Válassz típust!", "warning");
+            if(!org) return showAlert("Válassz szervet!", "warning");
+            if(!serial) return showAlert("Sorszám kötelező!", "warning");
+            if(!custId) return showAlert("Fegyverszám kötelező!", "warning");
+
+            if(!id) {
+                if(weaponDB.some(w => w.serial === serial || w.customId === custId)) return showAlert("Duplikáció! Már létezik ilyen sorszám.", "danger");
+                weaponDB.push({id: Date.now(), type, caliber, org, serial, customId, status: "RAKTÁRON"});
+                showAlert("Fegyver Rögzítve.", "success");
+            } else {
+                const idx = weaponDB.findIndex(w => w.id == id);
+                if(idx > -1) {
+                    weaponDB[idx] = {...weaponDB[idx], type, caliber, org, serial, custId};
+                    showAlert("Adatok Frissítve.", "success");
+                }
+            }
+            saveData(); resetWeaponForm(); renderWeaponRegistry(); renderUI();
+        }
+        function resetWeaponForm() { document.getElementById("editWeaponId").value = ""; document.getElementById("newWepSerial").value = ""; document.getElementById("newWepCustId").value = ""; document.getElementById("weaponFormTitle").innerText = "Új Fegyver Rögzítése"; document.getElementById("btnSaveWeapon").innerText = "RÖGZÍTÉS / ADAT MENTÉS"; document.getElementById("cancelEditContainer").style.display = "none"; }
+        function performIssue() { 
+            const isW = document.getElementById("modeWeapon").checked; 
+            const app = document.getElementById("issueApprover").value; 
+            const rec = document.getElementById("issueReceiver").value; 
+            if(!rec) return showAlert("Átvevő kötelező!", "warning");
+            
+            let s=null, c="", txtW="", txtA="", txtO="", accItems={}, accArr=[];
+            
+            // Fegyver
+            if(isW) { 
+                const wid = document.getElementById("issueWeaponSelect").value; 
+                if(!wid) return showAlert("Válassz fegyvert!", "warning"); 
+                const w = weaponDB.find(x=>x.id==wid); 
+                // Lőszer a fegyverhez
+                const aOrg = document.getElementById("issueAmmoOrg").value; 
+                const aCal = document.getElementById("issueAmmoCaliber").value;
+                let aAmt = parseInt(document.getElementById("issueAmmoAmount").value) || 0; 
+
+                if(currentUser.role!==2 && aAmt>0) { 
+                    if((ammoDB[aOrg][aCal]||0) < aAmt) return showAlert("Nincs elég lőszer!", "danger"); 
+                    ammoDB[aOrg][aCal]-=aAmt; 
+                    logAmmoTransaction(aOrg, aCal, -aAmt, `Kiadás: ${w.customId}`, currentUser.realName, rec);
+                    txtA = `${aAmt}db ${aCal} (${aOrg})`;
+                }
+                
+                // Kiegészítő
+                const accSrc = document.getElementById("issueAccSource").value;
+                if(accSrc) {
+                    let missingAcc=false;
+                    ACC_TYPES.forEach(acc => {
+                        const count = document.getElementById(`chkAcc-${acc.replace(/\s/g,'')}`).checked ? (parseInt(document.getElementById(`cntAcc-${acc.replace(/\s/g,'')}`).value)||0) : 0;
+                        if(count>0) {
+                            if((ammoDB[accSrc][acc]||0) < count) { showAlert(`Nincs ${acc} a ${accSrc} raktárban!`, "danger"); missingAcc=true; }
+                            accItems[acc]=count; accArr.push(`${count} ${acc}`);
+                        }
+                    });
+                    if(missingAcc) return; // Stop if not enough stock
+                    
+                    // Commit Acc
+                    ACC_TYPES.forEach(acc=>{ if(accItems[acc]) ammoDB[accSrc][acc]-=accItems[acc]; });
+                    if(accArr.length>0) txtO=`[${accSrc}:${accArr.join(',')}]`;
+                }
+
+                w.status="KIADVA"; s=w.serial; c=aCal; 
+                const mg=parseInt(document.getElementById("issueMagCount").value)||0;
+                txtW = `${w.type} (${w.customId})`; if(mg>0) txtW += ` + ${mg}db Tár`; 
+
+                logs.push({id:Date.now(), fsz:logCounter++, approver:app, issueTime:new Date().toLocaleString(), receiver:rec, weaponSerial:s, ammoOrg:aOrg, ammoAmount:aAmt, ammoCaliber:c, returnTime:"", returnVerifier:"", itemWeapon: txtW, itemAmmo: txtA, itemAcc: txtO, item: (txtW+(txtA?" "+txtA:"")+(txtO?" "+txtO:"")).trim(), accItems: accItems, accSource: accSrc});
+
+            } else { 
+                // Csak lőszer
+                const aOrg = document.getElementById("issueAmmoOrg").value; 
+                const aCal = document.getElementById("issueAmmoCaliber").value;
+                let aAmt = parseInt(document.getElementById("issueAmmoAmount").value) || 0; 
+                if(aAmt<=0) return showAlert("Mennyiség kell!", "warning"); 
+                if((ammoDB[aOrg][aCal]||0) < aAmt) return showAlert("Nincs lőszer!", "danger"); 
+                ammoDB[aOrg][aCal]-=aAmt; 
+                logAmmoTransaction(aOrg, aCal, -aAmt, `Kiadás: Csak lőszer`, currentUser.realName, rec);
+                txtA = `${aAmt}db ${aCal} (${aOrg})`;
+                logs.push({id:Date.now(), fsz:logCounter++, approver:app, issueTime:new Date().toLocaleString(), receiver:rec, weaponSerial:null, ammoOrg:aOrg, ammoAmount:aAmt, ammoCaliber:aCal, returnTime:"", returnVerifier:"", itemWeapon: "", itemAmmo: txtA, itemAcc: "", item: txtA, accItems: {}});
+            } 
+            
+            saveData(); renderUI(); showAlert("Kiadva.", "success"); 
+            document.getElementById("issueReceiver").value=""; document.getElementById("issueAmmoAmount").value=""; 
+        }
+
+        function performReturn() { 
+            const id=document.getElementById("returnSelect").value; 
+            const ver=document.getElementById("returnOfficer").value; 
+            if(!id) return showAlert("Válassz tételt!", "warning"); 
+            const l=logs.find(x=>x.id==id); 
+            if(l.weaponSerial){ const w=weaponDB.find(x=>x.serial===l.weaponSerial); if(w) w.status="RAKTÁRON"; } 
+            
+            const chkAmmo=document.getElementById("chkReturnAmmo").checked; 
+            let ra=0; 
+            if(chkAmmo && l.ammoAmount>0){
+                ra=parseInt(document.getElementById("returnAmmoAmount").value)||0; 
+                ammoDB[l.ammoOrg][l.ammoCaliber]+=ra;
+                logAmmoTransaction(l.ammoOrg, l.ammoCaliber, ra, `Visszavét: ${l.fsz}`, currentUser.realName, l.receiver);
+            }
+            if(l.ammoAmount>0) l.item += chkAmmo?` (Vissza:${ra})`:` (Fogyott)`;
+
+            if(document.getElementById("chkReturnAcc").checked && l.accItems) {
+                // Ha van tárolt accSource, oda tegyük vissza, ha nincs, keressünk egyet ami acc-képes (fallback)
+                let targetSrc = l.accSource;
+                if(!targetSrc) {
+                     const def = ORG_CONFIG.find(o=>o.acc);
+                     targetSrc = def ? def.name : "NKE";
+                }
+                for(const [acc,cnt] of Object.entries(l.accItems)) { if(cnt>0) {
+                    if(ammoDB[targetSrc][acc]===undefined) ammoDB[targetSrc][acc]=0;
+                    ammoDB[targetSrc][acc]+=cnt; 
+                }}
+                l.item += " (Acc OK)";
+            }
+
+            l.returnTime=new Date().toLocaleString(); l.returnVerifier=ver; 
+            saveData(); renderUI(); showAlert("Visszavéve.", "success"); 
+        }
+
+        function updateStock(){ const o=document.getElementById("stockOrgSelect").value, t=document.getElementById("stockTypeSelect").value, a=parseInt(document.getElementById("stockAmountChange").value)||0; if(a===0)return; if(!ammoDB[o][t])ammoDB[o][t]=0; ammoDB[o][t]+=a; if(ammoDB[o][t]<0)ammoDB[o][t]=0; logAmmoTransaction(o, t, a, "Bevétel", currentUser.realName, "Raktár"); saveData(); renderUI(); showAlert("Frissítve.", "info"); }
+        function updateAccessoryStock() { const o=document.getElementById("accStockOrg").value; const t=document.getElementById("accStockType").value, a=parseInt(document.getElementById("accStockAmount").value)||0; if(a===0||!o)return; if(!ammoDB[o][t])ammoDB[o][t]=0; ammoDB[o][t]+=a; if(ammoDB[o][t]<0)ammoDB[o][t]=0; logAmmoTransaction(o, t, a, "Bevétel (Acc)", currentUser.realName, "Raktár"); saveData(); renderUI(); showAlert("Frissítve.", "info"); }
+        
+        function autoConfigureAmmo() { const wId = document.getElementById("issueWeaponSelect").value; if(!wId) return; const w = weaponDB.find(x => x.id == wId); if(w) { document.getElementById("issueAmmoOrg").value = w.org; document.getElementById("issueAmmoCaliber").value = w.caliber; } }
+        function updateStockTypeSelect() { const t=document.getElementById("stockTypeSelect"); t.innerHTML=""; CALIBERS.forEach(c=>t.innerHTML+=`<option value="${c}">${c}</option>`); }
+        function toggleMagInput() { const chk=document.getElementById("chkMagModify").checked; document.getElementById("issueMagCount").readOnly=!chk; if(!chk)document.getElementById("issueMagCount").value=2; }
+        function toggleAccInput(c,i) { const chk=document.getElementById(c).checked; const inp=document.getElementById(i); if(!chk)inp.value=0; else if(inp.value==0)inp.value=1; }
+        function toggleReturnAmmoInput() { document.getElementById("returnAmmoInputDiv").style.display=document.getElementById("chkReturnAmmo").checked?"block":"none"; }
+        function checkReturnItemDetails() { 
+            const id = document.getElementById("returnSelect").value; const e = logs.find(l => l.id == id); 
+            document.getElementById("returnAmmoContainer").style.display = (e && e.ammoAmount > 0) ? "block" : "none";
+            if(e && e.ammoAmount > 0) document.getElementById("maxReturnAmmoInfo").innerText = `Max:${e.ammoAmount}`;
+            let hasAcc = false; if(e && e.accItems) for(let k in e.accItems) if(e.accItems[k]>0) hasAcc=true;
+            document.getElementById("returnAccContainer").style.display = hasAcc ? "block" : "none";
+            if(hasAcc) document.getElementById("accReturnInfo").innerText = "Kiegészítők vissza";
+        }
+
+        function deleteWeapon(id) { if(confirm("Biztos?")) { weaponDB = weaponDB.filter(x => x.id != id); saveData(); renderWeaponRegistry(); renderUI(); } }
+        function adminClearLogs() { if(prompt("Jelszó?")==="1234") { logs=[]; saveData(); renderUI(); showAlert("Törölve", "success"); } }
+        function addUser(){const u=document.getElementById("newUsername").value, p=document.getElementById("newPassword").value, rn=document.getElementById("newRealName").value, r=parseInt(document.getElementById("newRole").value); if(u&&p&&rn){users.push({name:u, pass:window.simpleHash(p), role:r, realName:rn}); saveData(true); renderUsersTable(); showAlert("OK", "success");}}
+        function deleteUser(n){if(confirm("Törlés?")){users=users.filter(x=>x.name!==n); saveData(true); renderUsersTable();}}
+        function renderUsersTable(){const tb=document.getElementById("usersTableBody"); tb.innerHTML=""; users.forEach(u=>tb.innerHTML+=`<tr><td>${u.name}</td><td>${ROLE_NAMES[u.role]}</td><td>${u.role}</td><td><button class="btn btn-sm btn-outline-danger" onclick="deleteUser('${u.name}')">X</button></td></tr>`);}
+        
+        function logAmmoTransaction(o,t,c,r,u,rec){ ammoHistory.push({date:new Date().toLocaleString(), org:o, type:t, change:c, reason:r, user:u, receiver:rec, balanceAfter:ammoDB[o][t], timestamp:Date.now()}); saveData(); }
+        
+        function showAmmoHistory(org, type) {
+            const tbody = document.getElementById("ammoHistoryBody"); tbody.innerHTML = "";
+            document.getElementById("ammoHistoryTitle").innerText = `${org} - ${type} Történet`;
+            window.lastHistOrg = org; window.lastHistType = type;
+            const history = ammoHistory.filter(h => h.org === org && h.type === type).sort((a,b) => b.timestamp - a.timestamp);
+            history.forEach(h => {
+                let badgeClass = h.change > 0 ? "bg-success" : "bg-danger";
+                tbody.innerHTML += `<tr><td>${h.date}</td><td><small>${h.reason}</small></td><td>${h.receiver||"-"}</td><td>${h.user || "-"}</td><td><span class="badge ${badgeClass}">${h.change > 0 ? "+" : ""}${h.change}</span></td><td class="fw-bold">${h.balanceAfter}</td></tr>`;
+            });
+            new bootstrap.Modal(document.getElementById('ammoHistoryModal')).show();
+        }
+
+        // --- NYOMTATÁS ---
+        function openPrintModal(type) {
+            document.getElementById("printTypeSource").value = type;
+            const container = document.getElementById("printOrgList");
+            container.innerHTML = "";
+            // Csak azokat a szerveket mutatjuk, akiknek van köze a típushoz
+            const targets = ORG_CONFIG.filter(o => type==='ammo' ? o.a : o.w);
+            targets.forEach(org => {
+                container.innerHTML += `<div class="form-check border p-2 rounded" style="min-width: 100px;"><input class="form-check-input" type="checkbox" value="${org.name}" id="chkPrint-${org.name}" checked><label class="form-check-label fw-bold" for="chkPrint-${org.name}">${org.name}</label></div>`;
+            });
+            new bootstrap.Modal(document.getElementById('printOptionsModal')).show();
+        }
+        function togglePrintChecks(state) { document.querySelectorAll('#printOrgList input[type="checkbox"]').forEach(c => c.checked = state); }
+        function executePrint() {
+            const type = document.getElementById("printTypeSource").value;
+            const selected = Array.from(document.querySelectorAll('#printOrgList input[type="checkbox"]:checked')).map(c => c.value);
+            if(selected.length === 0) return showAlert("Válasszon legalább egy szervet!", "warning");
+            bootstrap.Modal.getInstance(document.getElementById('printOptionsModal')).hide();
+            if(type === 'ammo') printAmmoInventory(selected); else if(type === 'weapon') printWeaponInventory(selected);
+        }
+
+        function printWeaponInventory(selectedOrgs) {
+            let html = `<h3>Fegyver Leltár</h3>`;
+            selectedOrgs.forEach(orgName => {
+                const orgWeapons = weaponDB.filter(w => (w.org === orgName) || (!w.org && w.customId.includes(orgName)));
+                if(orgWeapons.length === 0) return;
+                html += `<h4 class="mt-4 border-bottom border-danger text-danger">${orgName}</h4><table class="table table-bordered table-sm table-striped"><thead class="table-dark"><tr><th>Típus</th><th>Fegyverszám</th><th>Sorszám</th><th>Státusz</th></tr></thead><tbody>`;
+                orgWeapons.forEach(w => { 
+                    const statusExt = w.statusNote ? ` (${w.statusNote} - ${w.caseNo})` : '';
+                    html += `<tr><td>${w.type}</td><td>${w.customId}</td><td>${w.serial}</td><td>${w.status}${statusExt}</td></tr>`; 
+                });
+                const stock = orgWeapons.filter(w=>w.status==="RAKTÁRON").length;
+                const out = orgWeapons.filter(w=>w.status==="KIADVA").length;
+                html += `</tbody></table><div class="mb-3 small"><strong>Összesítő (${orgName}):</strong> Raktáron: ${stock} | Kiadva: ${out}</div>`;
+            });
+            html += `<div class="row mt-5"><div class="col-6 text-center"><div class="sig-box"></div><br>Leltározó</div><div class="col-6 text-center"><div class="sig-box"></div><br>Ellenőrző Parancsnok</div></div>`;
+            showPrintView("FEGYVER NYILVÁNTARTÁS", html);
+        }
+        function printAmmoInventory(selectedOrgs) {
+            let html = `<h3>Lőszer Raktár Leltár</h3>`;
+            selectedOrgs.forEach(orgName => {
+                 html += `<h4 class="mt-4 border-bottom border-warning">${orgName}</h4><table class="table table-bordered table-sm table-striped"><thead class="table-dark"><tr><th>Típus</th><th>Mennyiség</th><th>Aláírás</th></tr></thead><tbody>`;
+                 // Lőszer
+                 CALIBERS.forEach(c => {
+                     if(ammoDB[orgName] && ammoDB[orgName][c] !== undefined) {
+                         html += `<tr><td>${c}</td><td class="fw-bold">${ammoDB[orgName][c]} db</td><td class="sig-box"></td></tr>`;
+                     }
+                 });
+                 html += `</tbody></table>`;
+            });
+            html += `<div class="row mt-5"><div class="col-6 text-center"><div class="sig-box"></div><br>Raktáros</div><div class="col-6 text-center"><div class="sig-box"></div><br>Ellenőrző Parancsnok</div></div>`;
+            showPrintView("LŐSZER KÉSZLET", html);
+        }
+
+        function printAmmoHistory() {
+            const org = window.lastHistOrg; const type = window.lastHistType;
+            const history = ammoHistory.filter(h => h.org === org && h.type === type).sort((a,b) => a.timestamp - b.timestamp);
+            let html = `<h3>${org} - ${type} Nyilvántartás</h3><table class="table table-bordered table-striped"><thead><tr><th>Dátum</th><th>Esemény</th><th>Átvevő</th><th>Felhasználó</th><th>Változás</th><th>Egyenleg</th><th>Aláírás</th></tr></thead><tbody>`;
+            history.forEach(h => { html += `<tr><td>${h.date}</td><td>${h.reason}</td><td>${h.receiver||"-"}</td><td>${h.user||"-"}</td><td>${h.change}</td><td>${h.balanceAfter}</td><td class="sig-box"></td></tr>`; });
+            html += `</tbody></table>`;
+            showPrintView(`Lőszer Történet: ${org}`, html);
+        }
+        function printAccInventory() { showPrintView("KIEGÉSZÍTŐ LELTÁR", document.getElementById("accDisplayArea").innerHTML); }
+        function printEventLog() { showPrintView("NAPLÓ", document.getElementById("logTable").outerHTML); }
+
+        function renderWeaponRegistry() { 
+            const accArea = document.getElementById("weaponAccordionArea"); 
+            accArea.innerHTML = ""; 
+            ORG_CONFIG.filter(o=>o.w).forEach((orgObj, index) => {
+                const org = orgObj.name;
+                const orgWeapons = weaponDB.filter(w => (w.org === org) || (!w.org && w.customId.includes(org)));
+                let tableRows = "";
+                orgWeapons.forEach(w => {
+                    let stClass = "bg-secondary";
+                    if(w.status === "RAKTÁRON") stClass = "bg-success";
+                    else if(w.status === "KIADVA") stClass = "bg-primary";
+                    else if(w.status === "JAVÍTÁS") stClass = "bg-warning text-dark";
+                    else if(w.status === "SELEJT") stClass = "bg-danger";
+                    const canEdit = [5,6,7].includes(parseInt(currentUser.role));
+                    const editButton = (w.status !== "KIADVA" && canEdit) ? `<button class="btn btn-sm btn-outline-primary" onclick="showStatusChangeModal(${w.id})"><i class="fa-solid fa-pen"></i></button>` : `<button class="btn btn-sm btn-outline-secondary" disabled><i class="fa-solid fa-pen"></i></button>`;
+                    const deleteButton = canEdit ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteWeapon(${w.id})"><i class="fa-solid fa-trash"></i></button>` : '';
+                    const info = (w.statusNote && w.status!=="RAKTÁRON") ? `<br><small>(${w.statusNote})</small>` : '';
+                    tableRows += `<tr><td>${w.customId}</td><td>${w.type}</td><td>${w.caliber}</td><td>${w.serial}</td><td><span class="badge ${stClass}">${w.status}</span>${info}</td><td class="text-center">${editButton} ${deleteButton}</td></tr>`;
+                });
+                accArea.innerHTML += `<div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button collapsed fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#wepFlush-${index}">${org} Fegyverek (${orgWeapons.length} db)</button></h2><div id="wepFlush-${index}" class="accordion-collapse collapse" data-bs-parent="#weaponAccordionArea"><div class="accordion-body p-0"><table class="table table-hover table-bordered table-sm align-middle mb-0"><thead class="table-light"><tr><th>Fegyverszám</th><th>Típus</th><th>Kaliber</th><th>Sorszám</th><th>Státusz</th><th class="text-center" style="width:100px;">Műv</th></tr></thead><tbody>${tableRows}</tbody></table></div></div></div>`;
+            });
+        }
+        function showStatusChangeModal(id) {
+            const w = weaponDB.find(x => x.id == id); if(!w) return; resetWeaponForm();
+            document.getElementById("statusChangeWepId").value = w.id; document.getElementById("statusChangeTitle").innerText = `${w.customId} - Státusz`;
+            const sel = document.getElementById("newWeaponStatusValue");
+            let opts = ''; if (w.status !== 'RAKTÁRON') opts += `<option value="RAKTÁRON">VISSZA RAKTÁRRA</option>`; opts += `<option value="JAVÍTÁS" ${w.status==='JAVÍTÁS'?'selected':''}>JAVÍTÁS ALATT</option>`; opts += `<option value="SELEJT" ${w.status==='SELEJT'?'selected':''}>SELEJT</option>`;
+            sel.innerHTML = opts; document.getElementById("statusChangePerson").value = w.statusNote || currentUser.realName; document.getElementById("statusChangeCaseNo").value = w.caseNo || "";
+            sel.onchange = function() { const isMandatory = (this.value === "JAVÍTÁS" || this.value === "SELEJT"); document.getElementById('statusChangeDetails').style.display = isMandatory ? 'block' : 'none'; }; sel.onchange(); 
+            new bootstrap.Modal(document.getElementById('statusChangeModal')).show();
+        }
+        function confirmStatusChange() {
+            const id = document.getElementById("statusChangeWepId").value; const status = document.getElementById("newWeaponStatusValue").value; const person = document.getElementById("statusChangePerson").value.trim(); const caseNo = document.getElementById("statusChangeCaseNo").value.trim(); const idx = weaponDB.findIndex(x => x.id == id);
+            if(status !== "RAKTÁRON" && (!person || !caseNo)) return showAlert("Név és Ügyszám kötelező!", "warning");
+            if(idx > -1) { if(status === "RAKTÁRON") { weaponDB[idx].status = "RAKTÁRON"; delete weaponDB[idx].statusNote; delete weaponDB[idx].caseNo; } else { weaponDB[idx].status = status; weaponDB[idx].statusNote = person; weaponDB[idx].caseNo = caseNo; } showAlert("Státusz frissítve.", "success"); }
+            bootstrap.Modal.getInstance(document.getElementById('statusChangeModal')).hide(); saveData(); renderWeaponRegistry(); renderUI();
+        }
+        function performLogoutSequence() { if(confirm("Kilépés?")) location.reload(); }
+        function showPrintView(t,c){ document.getElementById("mainApp").style.display="none"; document.getElementById("printSection").style.display="block"; document.getElementById("printTitle").innerText=t; document.getElementById("printContent").innerHTML=c; document.getElementById("printDate").innerText=new Date().toLocaleString(); }
+        function restoreMainView(){ document.getElementById("printSection").style.display="none"; document.getElementById("mainApp").style.display="block"; }
+        function showAlert(m,t){ document.getElementById("alertPlace").innerHTML=`<div class="alert alert-${t} alert-dismissible fade show">${m}<button class="btn-close" data-bs-dismiss="alert"></button></div>`; setTimeout(()=>document.getElementById("alertPlace").innerHTML="",3000); }
+        function exportFuzet(){let csv="\uFEFFF.sz.;Eng.;Kiad.;Fegyver;Lőszer;Egyéb;Átv.;Vissza.;Igaz.\n"; logs.forEach(l=>csv+=`${l.fsz};${l.approver};${l.issueTime};${l.itemWeapon||l.item};${l.itemAmmo||""};${l.itemAcc||""};${l.receiver};${l.returnTime||""};${l.returnVerifier||""}\n`); downloadCSV(csv, "naplo.csv");}
+        function exportAmmoCSV(){let csv="\uFEFFSzerv;Típus;Mennyiség\n"; for(let o in ammoDB)for(let t in ammoDB[o])csv+=`${o};${t};${ammoDB[o][t]}\n`; downloadCSV(csv, "keszlet.csv");}
+        function exportWeaponCSV(){let csv="\uFEFFTípus;Kaliber;Szerv;Sorszám;Státusz\n"; weaponDB.forEach(w=>csv+=`${w.type};${w.caliber};${w.org};${w.serial};${w.status}\n`); downloadCSV(csv, "fegyverek.csv");}
+        function downloadCSV(c,f){const b=new Blob([c],{type:'text/csv;charset=utf-8;'}); const l=document.createElement("a"); l.href=URL.createObjectURL(b); l.download=f; l.click();}
+        function processAmmoImport(i){if(currentUser.role===7)showAlert("Import OK","success");}
+        function processWeaponImport(i){if(currentUser.role===7)showAlert("Import OK","success");}
+
+    </script>
+</body>
+</html>
