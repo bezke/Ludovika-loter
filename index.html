@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Raktárkezelő ONLINE - V33.1 (Fix)</title>
+    <title>Raktárkezelő ONLINE - V34 (Stable)</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     
@@ -87,7 +87,7 @@
         <div class="header-bg">
             <div class="container d-flex justify-content-between align-items-center">
                 <div>
-                    <h3 class="m-0"><i class="fa-solid fa-shield-halved"></i> Raktár V33 <small class="fs-6 opacity-50">Online</small></h3>
+                    <h3 class="m-0"><i class="fa-solid fa-shield-halved"></i> Raktár V34 <small class="fs-6 opacity-50">Stable</small></h3>
                     <span class="badge bg-warning text-dark mt-1" id="roleBadge"></span>
                 </div>
                 <div class="d-flex gap-3 align-items-center">
@@ -108,7 +108,7 @@
             <ul class="nav nav-tabs mb-3" id="mainTab" role="tablist">
                 <li class="nav-item" id="nav-issue"><button class="nav-link active fw-bold" data-bs-target="#tab-issue" data-bs-toggle="tab"><i class="fa-solid fa-share-from-square"></i> Kiadás / Visszavét</button></li>
                 <li class="nav-item"><button class="nav-link text-warning-emphasis fw-bold" data-bs-target="#tab-ammo" data-bs-toggle="tab"><i class="fa-solid fa-boxes-stacked"></i> Lőszer Raktár</button></li>
-                <li class="nav-item" id="nav-weapons"><button class="nav-link text-danger fw-bold" data-bs-target="#tab-weapons" data-bs-toggle="tab"><i class="fa-solid fa-gun"></i> Fegyver Nyilvántartás</button></li>
+                <li class="nav-item" id="nav-weapons"><button class="nav-link text-danger fw-bold" data-bs-target="#tab-weapons" data-bs-toggle="tab" onclick="setupDropdowns()"><i class="fa-solid fa-gun"></i> Fegyver Nyilvántartás</button></li>
                 <li class="nav-item"><button class="nav-link text-dark fw-bold" data-bs-target="#tab-accessories" data-bs-toggle="tab"><i class="fa-solid fa-vest"></i> Kiegészítők</button></li>
                 <li class="nav-item"><button class="nav-link" data-bs-target="#tab-log" data-bs-toggle="tab"><i class="fa-solid fa-list"></i> Eseménynapló</button></li>
                 <li class="nav-item" id="nav-users"><button class="nav-link text-secondary" data-bs-target="#tab-users" data-bs-toggle="tab"><i class="fa-solid fa-users"></i> Felhasználók</button></li>
@@ -682,6 +682,11 @@
         function init() {
             // DB ellenőrzés és javítás ha sérült
             ORG_CONFIG.forEach(org => {
+                // MIGRÁCIÓS JAVÍTÁS: Ha régi az adatbázis, állítsuk be a hiányzó értékeket
+                if(org.w === undefined) org.w = true; 
+                if(org.a === undefined) org.a = true;
+                if(org.acc === undefined) org.acc = false;
+
                 if(!ammoDB[org.name]) ammoDB[org.name] = {};
                 if(org.acc) ACC_TYPES.forEach(acc => { if(ammoDB[org.name][acc]===undefined) ammoDB[org.name][acc]=0; });
                 if(org.a) CALIBERS.forEach(c => { if(ammoDB[org.name][c]===undefined) ammoDB[org.name][c]=0; });
@@ -904,7 +909,8 @@
             document.getElementById("stockOrgSelect").innerHTML = ammoOrgs;
 
             // Fegyverhez aki "w" (Weapon) képes - FIX: Külön lista
-            const wepOrgs = ORG_CONFIG.filter(o => o.w).map(o => `<option value="${o.name}">${o.name}</option>`).join("");
+            // Biztosítjuk, hogy akkor is megjelenjen valami, ha nincs 'w' flag
+            const wepOrgs = ORG_CONFIG.filter(o => o.w !== false).map(o => `<option value="${o.name}">${o.name}</option>`).join("");
             document.getElementById("newWepOrg").innerHTML = wepOrgs; 
 
             // Kiegészítőhöz csak aki "acc" képes
