@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Raktárkezelő ONLINE - V34 (Stable)</title>
+    <title>Raktárkezelő ONLINE - V34.1 (Fix)</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     
@@ -967,22 +967,22 @@
             const caliber = document.getElementById("newWepCaliber").value;
             const org = document.getElementById("newWepOrg").value;
             const serial = document.getElementById("newWepSerial").value;
-            const custId = document.getElementById("newWepCustId").value;
+            const customId = document.getElementById("newWepCustId").value;
 
             // Pontosabb hibaüzenetek
             if(!type) return showAlert("Válassz típust!", "warning");
             if(!org) return showAlert("Válassz szervet!", "warning");
             if(!serial) return showAlert("Sorszám kötelező!", "warning");
-            if(!custId) return showAlert("Fegyverszám kötelező!", "warning");
+            if(!customId) return showAlert("Fegyverszám kötelező!", "warning");
 
             if(!id) {
-                if(weaponDB.some(w => w.serial === serial || w.customId === custId)) return showAlert("Duplikáció! Már létezik ilyen sorszám.", "danger");
+                if(weaponDB.some(w => w.serial === serial || w.customId === customId)) return showAlert("Duplikáció! Már létezik ilyen sorszám.", "danger");
                 weaponDB.push({id: Date.now(), type, caliber, org, serial, customId, status: "RAKTÁRON"});
                 showAlert("Fegyver Rögzítve.", "success");
             } else {
                 const idx = weaponDB.findIndex(w => w.id == id);
                 if(idx > -1) {
-                    weaponDB[idx] = {...weaponDB[idx], type, caliber, org, serial, custId};
+                    weaponDB[idx] = {...weaponDB[idx], type, caliber, org, serial, customId};
                     showAlert("Adatok Frissítve.", "success");
                 }
             }
